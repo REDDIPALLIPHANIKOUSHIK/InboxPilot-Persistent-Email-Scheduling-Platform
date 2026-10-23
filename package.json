@@ -1,0 +1,44 @@
+{
+  "name": "inboxpilot-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "InboxPilot — Persistent Email Scheduling Platform (ReachInbox Full-Stack Assignment)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --parallel dev",
+    "dev:backend": "pnpm --filter @inboxpilot/backend dev",
+    "dev:worker": "pnpm --filter @inboxpilot/worker dev",
+    "dev:frontend": "pnpm --filter @inboxpilot/frontend dev",
+    "build": "pnpm --filter @inboxpilot/shared build && pnpm --filter @inboxpilot/backend build && pnpm --filter @inboxpilot/worker build && pnpm --filter @inboxpilot/frontend build",
+    "test": "vitest run",
+    "lint": "pnpm --filter @inboxpilot/backend lint && pnpm --filter @inboxpilot/frontend lint",
+    "typecheck": "pnpm --filter @inboxpilot/shared typecheck && pnpm --filter @inboxpilot/backend typecheck && pnpm --filter @inboxpilot/worker typecheck && pnpm --filter @inboxpilot/frontend typecheck",
+    "prisma:generate": "pnpm --filter @inboxpilot/backend prisma:generate",
+    "prisma:migrate": "pnpm --filter @inboxpilot/backend prisma:migrate",
+    "prisma:studio": "pnpm --filter @inboxpilot/backend prisma:studio",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "email-scheduler",
+    "bullmq",
+    "redis",
+    "postgresql",
+    "reachinbox",
+    "inboxpilot",
+    "typescript",
+    "react"
+  ],
+  "author": "REDDIPALLIPHANIKOUSHIK",
+  "license": "MIT",
+  "devDependencies": {
+    "@prisma/client": "^6.3.1",
+    "prettier": "^3.4.2",
+    "prisma": "^6.3.1",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
