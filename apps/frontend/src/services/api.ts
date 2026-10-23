@@ -10,7 +10,24 @@ import {
   DashboardStatsDto,
 } from '@inboxpilot/shared';
 
-const API_BASE = '/api';
+export function getApiBaseUrl(): string {
+  // 1. Allow runtime override from localStorage if set by user
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('inboxpilot_custom_api_url');
+    if (saved && saved.trim()) {
+      return saved.trim().replace(/\/$/, '') + '/api';
+    }
+  }
+
+  // 2. Vite environment variable
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+    return envUrl.trim().replace(/\/$/, '') + '/api';
+  }
+
+  // 3. Same-origin fallback
+  return '/api';
+}
 
 export class ApiError extends Error {
   constructor(
@@ -25,20 +42,43 @@ export class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}${endpoint}`;
   const headers = new Headers(options.headers || {});
 
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(url, {
-    ...options,
-    headers,
-    credentials: 'include', // essential for HTTP-only cookies
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers,
+      credentials: 'include', // essential for HTTP-only cookies
+    });
+  } catch (err: any) {
+    throw new ApiError(
+      `Cannot connect to backend at ${baseUrl}. Ensure backend server is running and accessible.`,
+      'NETWORK_ERROR'
+    );
+  }
 
-  const data = await res.json().catch(() => ({}));
+  const contentType = res.headers.get('content-type') || '';
+  let data: any = {};
+
+  if (contentType.includes('application/json')) {
+    data = await res.json().catch(() => ({}));
+  } else {
+    // Non-JSON response (e.g. Vercel SPA html rewrite)
+    if (!res.ok || res.status === 404 || contentType.includes('text/html')) {
+      throw new ApiError(
+        `Backend API returned non-JSON response from ${url}. Ensure VITE_API_BASE_URL is configured in your deployment settings.`,
+        'BACKEND_NOT_CONFIGURED',
+        res.status
+      );
+    }
+  }
 
   if (!res.ok || data.success === false) {
     throw new ApiError(

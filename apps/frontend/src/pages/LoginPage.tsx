@@ -1,9 +1,31 @@
-import React from 'react';
-import { Send, CheckCircle2, Shield, Zap, RefreshCw, KeyRound } from 'lucide-react';
+import React, { useState } from 'react';
+import { Send, CheckCircle2, Shield, Zap, RefreshCw, KeyRound, Settings, Check } from 'lucide-react';
+import { getApiBaseUrl } from '../services/api.js';
 
 export const LoginPage: React.FC = () => {
+  const [showConfig, setShowConfig] = useState(false);
+  const [customApiUrl, setCustomApiUrl] = useState(() => {
+    return localStorage.getItem('inboxpilot_custom_api_url') || import.meta.env.VITE_API_BASE_URL || '';
+  });
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const currentBaseUrl = getApiBaseUrl();
+
   const handleGoogleLogin = () => {
-    window.location.href = '/api/auth/google';
+    window.location.href = `${currentBaseUrl}/auth/google`;
+  };
+
+  const handleSaveConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (customApiUrl.trim()) {
+      localStorage.setItem('inboxpilot_custom_api_url', customApiUrl.trim());
+    } else {
+      localStorage.removeItem('inboxpilot_custom_api_url');
+    }
+    setSavedSuccess(true);
+    setTimeout(() => {
+      window.location.reload();
+    }, 500);
   };
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -87,8 +109,52 @@ export const LoginPage: React.FC = () => {
           <div className="mt-6 p-3 rounded-xl bg-slate-900/60 border border-[#222E46] text-[11px] text-slate-400 flex items-start gap-2">
             <KeyRound className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
             <span>
-              Google OAuth credentials configured via <code className="text-slate-300 font-mono">GOOGLE_CLIENT_ID</code> and <code className="text-slate-300 font-mono">GOOGLE_CLIENT_SECRET</code> in server environment.
+              Google OAuth credentials configured via <code className="text-slate-300 font-mono">GOOGLE_CLIENT_ID</code> and <code className="text-slate-300 font-mono">GOOGLE_CLIENT_SECRET</code> on backend API.
             </span>
+          </div>
+
+          {/* Backend Connection Indicator & Settings Toggle */}
+          <div className="mt-4 pt-3 border-t border-[#222E46]/60 text-[11px] text-slate-400">
+            <div className="flex items-center justify-between">
+              <span className="truncate max-w-[240px]">
+                API: <code className="text-indigo-400 font-mono">{currentBaseUrl}</code>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowConfig(!showConfig)}
+                className="flex items-center gap-1 text-slate-400 hover:text-white transition"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Configure</span>
+              </button>
+            </div>
+
+            {showConfig && (
+              <form onSubmit={handleSaveConfig} className="mt-3 p-3 bg-[#0B0F19] rounded-xl border border-[#222E46] space-y-2">
+                <label className="block text-slate-300 font-medium text-[11px]">
+                  Backend API Base URL
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. http://localhost:5000 or https://api.yourdomain.com"
+                  value={customApiUrl}
+                  onChange={(e) => setCustomApiUrl(e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-[#131927] border border-[#222E46] rounded-lg text-white font-mono text-[11px] focus:outline-none focus:border-indigo-500"
+                />
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-slate-500">
+                    Saved in browser localStorage
+                  </span>
+                  <button
+                    type="submit"
+                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-medium flex items-center gap-1 transition"
+                  >
+                    {savedSuccess ? <Check className="w-3 h-3" /> : null}
+                    <span>Save & Reload</span>
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       </div>
