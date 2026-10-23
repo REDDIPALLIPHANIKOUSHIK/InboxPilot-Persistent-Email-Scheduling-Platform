@@ -1,18 +1,42 @@
 import React, { useState } from 'react';
-import { Send, CheckCircle2, Shield, Zap, RefreshCw, KeyRound, Settings, Check } from 'lucide-react';
+import { Send, CheckCircle2, Shield, Zap, RefreshCw, KeyRound, Settings, Check, Play, AlertCircle } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api.js';
+import { useAuth } from '../context/AuthContext.js';
+import { useNavigate } from 'react-router-dom';
 
 export const LoginPage: React.FC = () => {
+  const { loginDemoUser } = useAuth();
+  const navigate = useNavigate();
   const [showConfig, setShowConfig] = useState(false);
   const [customApiUrl, setCustomApiUrl] = useState(() => {
     return localStorage.getItem('inboxpilot_custom_api_url') || import.meta.env.VITE_API_BASE_URL || '';
   });
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [oauthErrorNotice, setOauthErrorNotice] = useState<string | null>(null);
 
   const currentBaseUrl = getApiBaseUrl();
 
-  const handleGoogleLogin = () => {
-    window.location.href = `${currentBaseUrl}/auth/google`;
+  const handleGoogleLogin = async () => {
+    // Check if backend is reachable
+    try {
+      const res = await fetch(`${currentBaseUrl}/health`, { signal: AbortSignal.timeout(2500) });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        // Backend is healthy, proceed with real Google OAuth flow
+        window.location.href = `${currentBaseUrl}/auth/google`;
+        return;
+      }
+    } catch {}
+
+    // Backend is not reachable (e.g. running on Vercel standalone without persistent Node server)
+    setOauthErrorNotice(
+      `Backend API is currently unreachable at "${currentBaseUrl}". For live BullMQ workers, connect a running backend server below, or click "Explore Interactive Dashboard" to test the UI & scheduling immediately.`
+    );
+  };
+
+  const handleEnterDemo = () => {
+    loginDemoUser();
+    navigate('/');
   };
 
   const handleSaveConfig = (e: React.FormEvent) => {
@@ -29,7 +53,7 @@ export const LoginPage: React.FC = () => {
   };
 
   const urlParams = new URLSearchParams(window.location.search);
-  const errorParam = urlParams.get('error');
+  const errorParam = urlParams.get('error') || oauthErrorNotice;
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden">
@@ -50,15 +74,18 @@ export const LoginPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Error notice if redirected with OAuth error */}
+          {/* Error notice if redirected with OAuth error or backend notice */}
           {errorParam && (
-            <div className="mb-6 p-3.5 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs">
-              <strong>Authentication notice:</strong> {decodeURIComponent(errorParam)}
+            <div className="mb-6 p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/60 text-amber-200 text-xs flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <strong>Notice:</strong> {decodeURIComponent(errorParam)}
+              </div>
             </div>
           )}
 
           {/* Features highlight */}
-          <div className="space-y-3 mb-8 bg-[#0B0F19]/60 p-4 rounded-2xl border border-[#222E46]/80 text-xs text-slate-300">
+          <div className="space-y-3 mb-6 bg-[#0B0F19]/60 p-4 rounded-2xl border border-[#222E46]/80 text-xs text-slate-300">
             <div className="flex items-center gap-2.5">
               <Zap className="w-4 h-4 text-indigo-400 flex-shrink-0" />
               <span>Real BullMQ delayed scheduling backed by persistent Redis</span>
@@ -77,39 +104,51 @@ export const LoginPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Real Google OAuth Button */}
-          <button
-            onClick={handleGoogleLogin}
-            id="google-login-btn"
-            className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-3 shadow-lg hover:shadow-xl active:scale-[0.98]"
-          >
-            {/* Official Google 'G' icon */}
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-              <path
-                fill="#4285F4"
-                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.04h3.88c2.27-2.09 3.66-5.17 3.66-9.14z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.04c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.26 21.36 7.36 24 12 24z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.28 14.28c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.59H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.41l4.03-3.13z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.36 0 3.26 2.64 1.25 6.59l4.03 3.13c.95-2.83 3.6-4.97 6.72-4.97z"
-              />
-            </svg>
-            <span>Continue with Google</span>
-          </button>
+          <div className="space-y-3">
+            {/* Real Google OAuth Button */}
+            <button
+              onClick={handleGoogleLogin}
+              id="google-login-btn"
+              className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-3 shadow-lg hover:shadow-xl active:scale-[0.98]"
+            >
+              {/* Official Google 'G' icon */}
+              <svg className="w-5 h-5" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.04h3.88c2.27-2.09 3.66-5.17 3.66-9.14z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.04c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.26 21.36 7.36 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.28 14.28c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.59H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.41l4.03-3.13z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.36 0 3.26 2.64 1.25 6.59l4.03 3.13c.95-2.83 3.6-4.97 6.72-4.97z"
+                />
+              </svg>
+              <span>Continue with Google</span>
+            </button>
+
+            {/* Interactive Demo / UI Preview Button */}
+            <button
+              onClick={handleEnterDemo}
+              id="enter-demo-btn"
+              className="w-full py-3 px-4 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 font-semibold text-xs transition flex items-center justify-center gap-2"
+            >
+              <Play className="w-3.5 h-3.5" />
+              <span>Explore Interactive Dashboard (Preview Mode)</span>
+            </button>
+          </div>
 
           {/* Setup note */}
-          <div className="mt-6 p-3 rounded-xl bg-slate-900/60 border border-[#222E46] text-[11px] text-slate-400 flex items-start gap-2">
+          <div className="mt-5 p-3 rounded-xl bg-slate-900/60 border border-[#222E46] text-[11px] text-slate-400 flex items-start gap-2">
             <KeyRound className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
             <span>
-              Google OAuth credentials configured via <code className="text-slate-300 font-mono">GOOGLE_CLIENT_ID</code> and <code className="text-slate-300 font-mono">GOOGLE_CLIENT_SECRET</code> on backend API.
+              Real Google OAuth requires backend running with <code className="text-slate-300 font-mono">GOOGLE_CLIENT_ID</code> and <code className="text-slate-300 font-mono">GOOGLE_CLIENT_SECRET</code>.
             </span>
           </div>
 

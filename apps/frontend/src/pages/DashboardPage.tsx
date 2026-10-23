@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api.js';
+import { useAuth } from '../context/AuthContext.js';
 import { Navbar } from '../components/Navbar.js';
 import { MetricCards } from '../components/MetricCards.js';
 import { ScheduledEmailsTable } from '../components/ScheduledEmailsTable.js';
 import { SentEmailsTable } from '../components/SentEmailsTable.js';
 import { ComposeModal } from '../components/ComposeModal.js';
-import { Clock, CheckCircle2 } from 'lucide-react';
+import { Clock, CheckCircle2, Sparkles } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
+  const { isDemoMode } = useAuth();
   const [activeTab, setActiveTab] = useState<'scheduled' | 'sent'>('scheduled');
   const [isComposeOpen, setIsComposeOpen] = useState(false);
 
@@ -23,6 +25,18 @@ export const DashboardPage: React.FC = () => {
       <Navbar onOpenCompose={() => setIsComposeOpen(true)} />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8">
+        {/* Interactive preview notice if running in demo mode */}
+        {isDemoMode && (
+          <div className="mb-6 p-3.5 bg-indigo-950/50 border border-indigo-500/40 rounded-2xl flex items-center justify-between text-xs text-indigo-200 shadow-lg">
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+              <span>
+                <strong>Interactive UI Preview Mode:</strong> You are exploring the ReachInbox dashboard, lead validation, and campaign scheduler. To run live dispatches through BullMQ workers and Ethereal SMTP, connect your backend server via &quot;Configure&quot; on the login page.
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Metric Cards */}
         <MetricCards stats={stats} isLoading={isStatsLoading} />
 
