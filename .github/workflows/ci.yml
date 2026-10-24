@@ -11,9 +11,20 @@ jobs:
     name: Lint, Typecheck, Test & Build
     runs-on: ubuntu-latest
 
+    env:
+      NODE_ENV: test
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/inboxpilot?schema=public"
+      REDIS_URL: "redis://localhost:6379"
+      JWT_SECRET: "inboxpilot_jwt_secret_must_be_at_least_32_characters_long_for_production"
+      SESSION_SECRET: "inboxpilot_session_cookie_secret_default_key"
+      FRONTEND_URL: "http://localhost:5173"
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Copy Environment Template
+        run: cp .env.example .env
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -29,6 +40,9 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build Shared Workspace
+        run: pnpm --filter @inboxpilot/shared build
+
       - name: Generate Prisma Client
         run: pnpm prisma:generate
 
@@ -41,5 +55,5 @@ jobs:
       - name: Run Automated Test Suites
         run: pnpm test
 
-      - name: Build All Monorepo Workspaces
+      - name: Build Monorepo Workspaces
         run: pnpm build
