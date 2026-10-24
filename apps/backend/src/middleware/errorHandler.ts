@@ -27,25 +27,28 @@ export function errorHandler(
     stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined,
   });
 
-  if (err instanceof ZodError) {
+  if (err instanceof ZodError || err.name === 'ZodError') {
+    const zodErr = err as ZodError;
     res.status(400).json({
       success: false,
       error: {
         message: 'Validation failed',
         code: 'VALIDATION_ERROR',
-        details: err.flatten().fieldErrors,
+        details: typeof zodErr.flatten === 'function' ? zodErr.flatten().fieldErrors : undefined,
       },
     });
     return;
   }
 
-  if (err instanceof AppError) {
-    res.status(err.statusCode).json({
+  if (err instanceof AppError || err.name === 'AppError' || 'statusCode' in err) {
+    const appErr = err as AppError;
+    const statusCode = appErr.statusCode || 400;
+    res.status(statusCode).json({
       success: false,
       error: {
-        message: err.message,
-        code: err.code || 'APP_ERROR',
-        details: err.details,
+        message: appErr.message,
+        code: appErr.code || 'APP_ERROR',
+        details: appErr.details,
       },
     });
     return;

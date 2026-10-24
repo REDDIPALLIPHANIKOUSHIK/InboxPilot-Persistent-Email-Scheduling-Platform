@@ -102,7 +102,10 @@ describe('Campaign Idempotency & Transactional Outbox Suite', () => {
       expect(emailQueue.addBulk).toHaveBeenCalledWith([
         expect.objectContaining({
           name: 'send-email',
-          opts: { jobId: 'email:email-1', delay: 5000 },
+          opts: expect.objectContaining({
+            jobId: 'email:email-1',
+            attempts: 3,
+          }),
         }),
       ]);
       expect(updateManySpy).toHaveBeenCalledWith(

@@ -1,6 +1,6 @@
 # InboxPilot — Persistent Email Scheduling Platform
 
-> Built for the **ReachInbox.ai Full-Stack Email Job Scheduler** Hiring Assignment.  
+> Enterprise-grade persistent email scheduling, transactional outbox delivery, and distributed rate limiting platform.  
 > **Author**: [REDDIPALLIPHANIKOUSHIK](https://github.com/REDDIPALLIPHANIKOUSHIK)  
 > **Repository**: [https://github.com/REDDIPALLIPHANIKOUSHIK/InboxPilot-Persistent-Email-Scheduling-Platform](https://github.com/REDDIPALLIPHANIKOUSHIK/InboxPilot-Persistent-Email-Scheduling-Platform)  
 > **Frontend Deployment**: [https://inboxpilot-persistent-email-schedul.vercel.app/](https://inboxpilot-persistent-email-schedul.vercel.app/)
@@ -24,7 +24,7 @@ In distributed production environments, these approaches break down:
 - **Distributed Send Spacing**: Enforces minimum intervals between dispatches per sender identity across all concurrent workers without blocking worker threads with inline sleep.
 - **Strict Idempotency**: Database-level unique constraints (`userId + idempotencyKey`) and stable BullMQ job IDs (`email:${emailId}`) prevent duplicate sends across retries or double clicks.
 - **Ethereal SMTP Integration**: Real SMTP transmission via Nodemailer, recording message IDs and direct web preview inspection links.
-- **Modern ReachInbox SaaS Dashboard**: React SPA with live dark theme, lead CSV/text ingestion, Scheduled & Sent tables, and isolated preview mode.
+- **Modern SaaS Dashboard**: React SPA with live dark theme, lead CSV/text ingestion, Scheduled & Sent tables, and isolated preview mode.
 
 ---
 

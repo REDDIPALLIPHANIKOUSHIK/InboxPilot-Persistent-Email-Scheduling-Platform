@@ -49,6 +49,11 @@ export class OutboxService {
       opts: {
         jobId: string;
         delay: number;
+        attempts?: number;
+        backoff?: {
+          type: string;
+          delay: number;
+        };
       };
     }> = [];
 
@@ -57,12 +62,22 @@ export class OutboxService {
     for (const msg of pendingMessages) {
       try {
         const payload: OutboxJobPayload = JSON.parse(msg.payload);
+        const scheduledTime = payload.scheduledAt ? new Date(payload.scheduledAt).getTime() : NaN;
+        const remainingDelay = !isNaN(scheduledTime)
+          ? Math.max(0, scheduledTime - Date.now())
+          : Math.max(0, msg.delayMs);
+
         jobsToAdd.push({
           name: SEND_EMAIL_JOB_NAME,
           data: payload,
           opts: {
             jobId: msg.jobId,
-            delay: Math.max(0, msg.delayMs),
+            delay: remainingDelay,
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 3000,
+            },
           },
         });
         validMessageIds.push(msg.id);

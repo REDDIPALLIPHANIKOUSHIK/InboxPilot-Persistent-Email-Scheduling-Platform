@@ -70,7 +70,7 @@ export const LoginPage: React.FC = () => {
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white">InboxPilot</h1>
             <p className="text-xs text-slate-400 mt-1.5 font-medium">
-              ReachInbox Hiring Assignment — Persistent Email Scheduler
+              Enterprise Persistent Email Scheduling & Delivery Platform
             </p>
           </div>
 

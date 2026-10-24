@@ -10,7 +10,7 @@ describe('Real Redis & BullMQ Persistence and Recovery Mechanics', () => {
     const emailData = {
       emailId: 'test-uuid-4567',
       campaignId: 'camp-999',
-      recipientEmail: 'lead@reachinbox.ai',
+      recipientEmail: 'lead@inboxpilot.local',
     };
 
     // When BullMQ receives a job with an existing jobId:

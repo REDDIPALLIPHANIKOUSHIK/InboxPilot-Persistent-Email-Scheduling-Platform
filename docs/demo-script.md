@@ -1,19 +1,19 @@
 # InboxPilot — 5-Minute Technical Demonstration Script
 
-> **Note**: This is the natural speaker script for presenting the ReachInbox Full-Stack Email Job Scheduler hiring assignment. Total duration: 5 minutes.
+> **Note**: This is the natural speaker script for presenting the InboxPilot Persistent Email Scheduling & Delivery Platform. Total duration: 5 minutes.
 
 ---
 
 ### [0:00 – 0:30] Introduction & Architecture Overview
 * **Visual**: Show browser tab with architecture diagram (`docs/architecture.md`) or terminal running Docker Compose services.
 * **Speaker Script**:
-  > "Hello everyone! Today I'm presenting **InboxPilot**, a persistent, distributed email scheduling platform built for ReachInbox.
+  > "Hello everyone! Today I'm presenting **InboxPilot**, a persistent, distributed email scheduling platform.
   >
   > Unlike typical projects that use basic node-cron polling or in-memory arrays, InboxPilot is built on a distributed production architecture:
   > - An Express and TypeScript backend utilizing Prisma with PostgreSQL for ACID persistence.
   > - Redis-backed BullMQ delayed jobs to handle millions of scheduled dispatches without memory leaks.
   > - Dedicated worker processes enforcing distributed sliding-window hourly rate limits and per-sender minimum send spacing via atomic Redis Lua scripts.
-  > - Real Ethereal SMTP integration with delivery receipts, and a modern React dashboard adhering to ReachInbox design standards."
+  > - Real Ethereal SMTP integration with delivery receipts, and a modern React dashboard adhering to modern SaaS design standards."
 
 ---
 

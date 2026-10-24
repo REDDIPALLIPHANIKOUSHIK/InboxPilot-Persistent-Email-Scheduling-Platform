@@ -168,33 +168,28 @@ export function createEmailWorker(): Worker {
         });
 
         if (updateSentResult.count > 0) {
-          await prisma.campaign.update({
+          const campaign = await prisma.campaign.update({
             where: { id: email.campaignId },
             data: {
               sentCount: { increment: 1 },
             },
+            select: { totalEmails: true, sentCount: true, failedCount: true },
           });
+
+          if (campaign && campaign.sentCount + campaign.failedCount >= campaign.totalEmails) {
+            await prisma.campaign.update({
+              where: { id: email.campaignId },
+              data: { status: 'completed' },
+            });
+            logger.info(
+              `🎉 Campaign ${email.campaignId} completed (${campaign.sentCount} sent, ${campaign.failedCount} failed)`
+            );
+          }
         }
 
         logger.info(`✅ Email [${email.id}] successfully sent to <${email.recipientEmail}>!`);
         if (result.previewUrl) {
           logger.info(`🔗 Ethereal Preview URL: ${result.previewUrl}`);
-        }
-
-        // Check if all emails in the campaign have completed
-        const campaign = await prisma.campaign.findUnique({
-          where: { id: email.campaignId },
-          select: { totalEmails: true, sentCount: true, failedCount: true },
-        });
-
-        if (campaign && campaign.sentCount + campaign.failedCount >= campaign.totalEmails) {
-          await prisma.campaign.update({
-            where: { id: email.campaignId },
-            data: { status: 'completed' },
-          });
-          logger.info(
-            `🎉 Campaign ${email.campaignId} completed (${campaign.sentCount} sent, ${campaign.failedCount} failed)`
-          );
         }
 
         return {
@@ -211,6 +206,7 @@ export function createEmailWorker(): Worker {
 
         const isPermanentError =
           (err.responseCode && err.responseCode >= 500 && err.responseCode < 600) ||
+          (err.code && ['EENVELOPE', 'EDNS', 'EAUTH', 'INVALID_ADDRESS'].includes(err.code)) ||
           attemptNumber >= 3;
 
         await prisma.deliveryAttempt.update({
@@ -233,12 +229,23 @@ export function createEmailWorker(): Worker {
           });
 
           if (updateFailResult.count > 0) {
-            await prisma.campaign.update({
+            const campaign = await prisma.campaign.update({
               where: { id: email.campaignId },
               data: {
                 failedCount: { increment: 1 },
               },
+              select: { totalEmails: true, sentCount: true, failedCount: true },
             });
+
+            if (campaign && campaign.sentCount + campaign.failedCount >= campaign.totalEmails) {
+              await prisma.campaign.update({
+                where: { id: email.campaignId },
+                data: { status: 'completed' },
+              });
+              logger.info(
+                `🎉 Campaign ${email.campaignId} completed (${campaign.sentCount} sent, ${campaign.failedCount} failed)`
+              );
+            }
           }
           logger.warn(`Email ${email.id} permanently failed after ${attemptNumber} attempts.`);
         } else {

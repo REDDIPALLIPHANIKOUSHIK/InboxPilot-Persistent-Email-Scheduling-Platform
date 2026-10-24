@@ -21,7 +21,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCompose }) => {
             <div className="flex items-center gap-2">
               <span className="font-bold text-lg tracking-tight text-white">InboxPilot</span>
               <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                ReachInbox Engine
+                Distributed Engine
               </span>
             </div>
             <p className="text-xs text-slate-400 hidden sm:block">

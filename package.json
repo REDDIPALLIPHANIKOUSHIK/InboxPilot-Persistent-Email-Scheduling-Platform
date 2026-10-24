@@ -2,7 +2,7 @@
   "name": "inboxpilot-monorepo",
   "version": "1.0.0",
   "private": true,
-  "description": "InboxPilot — Persistent Email Scheduling Platform (ReachInbox Full-Stack Assignment)",
+  "description": "InboxPilot — High-Reliability Persistent Email Scheduling & Delivery Platform",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -18,6 +18,7 @@
     "typecheck": "pnpm --filter @inboxpilot/shared typecheck && pnpm --filter @inboxpilot/backend typecheck && pnpm --filter @inboxpilot/worker typecheck && pnpm --filter @inboxpilot/frontend typecheck",
     "prisma:generate": "pnpm --filter @inboxpilot/backend prisma:generate",
     "prisma:migrate": "pnpm --filter @inboxpilot/backend prisma:migrate",
+    "prisma:deploy": "pnpm --filter @inboxpilot/backend prisma:deploy",
     "prisma:studio": "pnpm --filter @inboxpilot/backend prisma:studio",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down"
@@ -27,7 +28,7 @@
     "bullmq",
     "redis",
     "postgresql",
-    "reachinbox",
+    "transactional-outbox",
     "inboxpilot",
     "typescript",
     "react"

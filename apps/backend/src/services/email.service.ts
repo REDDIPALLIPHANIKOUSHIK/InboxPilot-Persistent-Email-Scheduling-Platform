@@ -41,6 +41,15 @@ export class EmailService {
       throw new AppError('Invalid start time format', 400, 'INVALID_START_TIME');
     }
 
+    // Reject past scheduling times with 60-second grace window for client clock drift
+    if (startAt.getTime() < Date.now() - 60000) {
+      throw new AppError(
+        'Scheduled start time cannot be in the past. Please select a current or future timestamp.',
+        400,
+        'PAST_SCHEDULING_TIME'
+      );
+    }
+
     // Resolve Sender
     let sender = null;
     if (requestedSenderId) {
