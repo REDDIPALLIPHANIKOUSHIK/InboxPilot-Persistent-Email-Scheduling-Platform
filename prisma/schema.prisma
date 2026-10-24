@@ -50,6 +50,7 @@ model Campaign {
   subject              String
   body                 String   @db.Text
   startAt              DateTime
+  idempotencyKey       String?
   delayBetweenEmailsMs Int      @default(1000)
   hourlyLimit          Int      @default(200)
   status               String   @default("active") // active, completed, paused, cancelled
@@ -63,9 +64,11 @@ model Campaign {
   sender  Sender  @relation(fields: [senderId], references: [id], onDelete: Restrict)
   emails  Email[]
 
+  @@unique([userId, idempotencyKey])
   @@index([userId])
   @@index([senderId])
   @@index([status])
+  @@index([idempotencyKey])
   @@map("campaigns")
 }
 
@@ -116,4 +119,23 @@ model DeliveryAttempt {
 
   @@index([emailId])
   @@map("delivery_attempts")
+}
+
+model OutboxMessage {
+  id          String    @id @default(uuid())
+  campaignId  String?
+  emailId     String?
+  jobId       String    @unique
+  eventType   String    @default("SCHEDULE_EMAIL") // SCHEDULE_EMAIL, CANCEL_EMAIL
+  payload     String    @db.Text
+  delayMs     Int       @default(0)
+  status      String    @default("pending") // pending, published, failed
+  retryCount  Int       @default(0)
+  lastError   String?   @db.Text
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@map("outbox_messages")
 }

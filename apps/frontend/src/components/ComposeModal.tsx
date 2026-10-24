@@ -144,6 +144,8 @@ export const ComposeModal: React.FC<ComposeModalProps> = ({ isOpen, onClose }) =
       return;
     }
 
+    const clientCampaignKey = `camp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
     scheduleMutation.mutate({
       name: campaignName.trim() || undefined,
       subject: subject.trim(),
@@ -153,6 +155,7 @@ export const ComposeModal: React.FC<ComposeModalProps> = ({ isOpen, onClose }) =
       startAt: startDate.toISOString(),
       delayBetweenEmailsMs: delayBetweenEmailsSeconds * 1000,
       hourlyLimit,
+      idempotencyKey: clientCampaignKey,
     });
   };
 

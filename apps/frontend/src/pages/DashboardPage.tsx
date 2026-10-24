@@ -27,13 +27,22 @@ export const DashboardPage: React.FC = () => {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8">
         {/* Interactive preview notice if running in demo mode */}
         {isDemoMode && (
-          <div className="mb-6 p-3.5 bg-indigo-950/50 border border-indigo-500/40 rounded-2xl flex items-center justify-between text-xs text-indigo-200 shadow-lg">
+          <div className="mb-6 p-3.5 bg-indigo-950/50 border border-indigo-500/40 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-indigo-200 shadow-lg">
             <div className="flex items-center gap-2.5">
               <Sparkles className="w-4 h-4 text-indigo-400 flex-shrink-0" />
               <span>
-                <strong>Interactive UI Preview Mode:</strong> You are exploring the ReachInbox dashboard, lead validation, and campaign scheduler. To run live dispatches through BullMQ workers and Ethereal SMTP, connect your backend server via &quot;Configure&quot; on the login page.
+                <strong>Interactive UI Preview Mode:</strong> You are exploring isolated local demo records. Live BullMQ scheduling, Redis persistence, and Ethereal SMTP dispatches run on your backend server.
               </span>
             </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem('inboxpilot_demo_session');
+                window.location.href = '/login';
+              }}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs whitespace-nowrap transition"
+            >
+              Exit Preview & Connect Live
+            </button>
           </div>
         )}
 

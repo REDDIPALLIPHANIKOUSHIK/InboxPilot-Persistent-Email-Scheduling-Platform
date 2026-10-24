@@ -5,7 +5,6 @@ import {
   calculateBullMQDelay,
   isValidEmail,
   SEND_EMAIL_JOB_NAME,
-  ScheduleEmailInput,
   ScheduleEmailOutput,
   ScheduleEmailResponseData,
   PaginatedResponse,
@@ -13,11 +12,13 @@ import {
 } from '@inboxpilot/shared';
 import { AppError } from '../middleware/errorHandler.js';
 import { logger } from '../lib/logger.js';
+import { OutboxService, OutboxJobPayload } from './outbox.service.js';
 import { v4 as uuidv4 } from 'uuid';
+import { Prisma } from '@prisma/client';
 
 export class EmailService {
   /**
-   * Schedules a campaign and its individual emails
+   * Schedules a campaign and its individual emails using Transactional Outbox & Idempotency Keys
    */
   public static async scheduleCampaign(
     userId: string,
@@ -91,17 +92,20 @@ export class EmailService {
       });
     }
 
-    const campaignKey = clientCampaignKey || uuidv4();
-
-    // Check campaign idempotency if provided
+    // PART 5: Check campaign idempotency if client provided an idempotency key
     if (clientCampaignKey) {
       const existingCampaign = await prisma.campaign.findFirst({
-        where: { userId, name: campaignKey },
+        where: {
+          userId,
+          idempotencyKey: clientCampaignKey,
+        },
         include: { sender: true },
       });
 
       if (existingCampaign) {
-        logger.info(`Idempotent request: returning existing campaign ${existingCampaign.id}`);
+        logger.info(
+          `[IDEMPOTENCY] Returning existing campaign ${existingCampaign.id} for idempotency key "${clientCampaignKey}"`
+        );
         const emails = await prisma.email.findMany({
           where: { campaignId: existingCampaign.id },
           orderBy: { scheduledAt: 'asc' },
@@ -126,13 +130,15 @@ export class EmailService {
           totalRejected: 0,
           rejectedReasons: [],
           firstScheduledAt: emails[0]?.scheduledAt.toISOString() || existingCampaign.startAt.toISOString(),
-          lastScheduledAt: emails[emails.length - 1]?.scheduledAt.toISOString() || existingCampaign.startAt.toISOString(),
+          lastScheduledAt:
+            emails[emails.length - 1]?.scheduledAt.toISOString() || existingCampaign.startAt.toISOString(),
         };
       }
     }
 
-    // Prepare Email records
+    // Prepare Email and Outbox records
     const now = new Date();
+    const campaignId = uuidv4();
     const emailRecordsToCreate: Array<{
       id: string;
       userId: string;
@@ -146,26 +152,16 @@ export class EmailService {
       bullmqJobId: string;
     }> = [];
 
-    const queueJobsToAdd: Array<{
-      name: string;
-      data: {
-        emailId: string;
-        campaignId: string;
-        senderId: string;
-        recipientEmail: string;
-        subject: string;
-        body: string;
-        scheduledAt: string;
-        hourlyLimit: number;
-        minimumSendIntervalMs: number;
-      };
-      opts: {
-        jobId: string;
-        delay: number;
-      };
+    const outboxRecordsToCreate: Array<{
+      id: string;
+      campaignId: string;
+      emailId: string;
+      jobId: string;
+      eventType: string;
+      payload: string;
+      delayMs: number;
+      status: string;
     }> = [];
-
-    const campaignId = uuidv4();
 
     for (let i = 0; i < validEmails.length; i++) {
       const recipient = validEmails[i];
@@ -188,66 +184,117 @@ export class EmailService {
         bullmqJobId: stableJobId,
       });
 
-      queueJobsToAdd.push({
-        name: SEND_EMAIL_JOB_NAME,
-        data: {
-          emailId,
-          campaignId,
-          senderId: sender.id,
-          recipientEmail: recipient,
-          subject,
-          body,
-          scheduledAt: scheduledAt.toISOString(),
-          hourlyLimit,
-          minimumSendIntervalMs: sender.minimumSendIntervalMs,
-        },
-        opts: {
-          jobId: stableJobId,
-          delay: delayMs,
-        },
+      const outboxPayload: OutboxJobPayload = {
+        emailId,
+        campaignId,
+        senderId: sender.id,
+        recipientEmail: recipient,
+        subject,
+        body,
+        scheduledAt: scheduledAt.toISOString(),
+        hourlyLimit,
+        minimumSendIntervalMs: sender.minimumSendIntervalMs,
+      };
+
+      outboxRecordsToCreate.push({
+        id: uuidv4(),
+        campaignId,
+        emailId,
+        jobId: stableJobId,
+        eventType: 'SCHEDULE_EMAIL',
+        payload: JSON.stringify(outboxPayload),
+        delayMs,
+        status: 'pending',
       });
     }
 
-    // Database Transaction: persist Campaign and all Email records
-    const createdCampaign = await prisma.$transaction(async (tx) => {
-      const camp = await tx.campaign.create({
-        data: {
-          id: campaignId,
-          userId,
-          senderId: sender!.id,
-          name: name || `Campaign ${new Date().toLocaleDateString()}`,
-          subject,
-          body,
-          startAt,
-          delayBetweenEmailsMs,
-          hourlyLimit,
-          status: 'active',
-          totalEmails: emailRecordsToCreate.length,
-          sentCount: 0,
-          failedCount: 0,
-        },
-        include: { sender: true },
-      });
-
-      await tx.email.createMany({
-        data: emailRecordsToCreate.map((e) => ({
-          ...e,
-          campaignId: camp.id,
-        })),
-      });
-
-      return camp;
-    });
-
-    // Enqueue BullMQ delayed jobs in bulk using stable job IDs
+    // PART 6: Database Transaction (Campaign, Emails, OutboxMessages atomically committed)
+    let createdCampaign: any;
     try {
-      await emailQueue.addBulk(queueJobsToAdd);
-      logger.info(`Successfully enqueued ${queueJobsToAdd.length} BullMQ delayed jobs for campaign ${campaignId}`);
+      createdCampaign = await prisma.$transaction(async (tx) => {
+        const camp = await tx.campaign.create({
+          data: {
+            id: campaignId,
+            userId,
+            senderId: sender!.id,
+            name: name || `Campaign ${new Date().toLocaleDateString()}`,
+            subject,
+            body,
+            startAt,
+            idempotencyKey: clientCampaignKey || null,
+            delayBetweenEmailsMs,
+            hourlyLimit,
+            status: 'active',
+            totalEmails: emailRecordsToCreate.length,
+            sentCount: 0,
+            failedCount: 0,
+          },
+          include: { sender: true },
+        });
+
+        await tx.email.createMany({
+          data: emailRecordsToCreate.map((e) => ({
+            ...e,
+            campaignId: camp.id,
+          })),
+        });
+
+        await tx.outboxMessage.createMany({
+          data: outboxRecordsToCreate,
+        });
+
+        return camp;
+      });
     } catch (err: any) {
-      logger.error(`Failed to add jobs to BullMQ for campaign ${campaignId}: ${err.message}`);
-      // Even if queue fails, DB records exist with status='scheduled' and can be reconciled safely
-      throw new AppError('Failed to schedule jobs into queue', 500, 'QUEUE_ENQUEUE_ERROR');
+      // Handle race condition: if concurrent request created with same idempotency key
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        if (clientCampaignKey) {
+          logger.warn(
+            `[IDEMPOTENCY-RACE] Caught unique constraint collision for idempotency key "${clientCampaignKey}". Fetching created campaign.`
+          );
+          const existing = await prisma.campaign.findFirst({
+            where: { userId, idempotencyKey: clientCampaignKey },
+            include: { sender: true },
+          });
+          if (existing) {
+            const emails = await prisma.email.findMany({
+              where: { campaignId: existing.id },
+              orderBy: { scheduledAt: 'asc' },
+            });
+            return {
+              campaign: {
+                ...existing,
+                status: existing.status as any,
+                startAt: existing.startAt.toISOString(),
+                createdAt: existing.createdAt.toISOString(),
+                updatedAt: existing.updatedAt.toISOString(),
+                sender: existing.sender
+                  ? {
+                      ...existing.sender,
+                      createdAt: existing.sender.createdAt.toISOString(),
+                      updatedAt: existing.sender.updatedAt.toISOString(),
+                    }
+                  : undefined,
+              },
+              totalAccepted: emails.length,
+              totalRejected: 0,
+              rejectedReasons: [],
+              firstScheduledAt: emails[0]?.scheduledAt.toISOString() || existing.startAt.toISOString(),
+              lastScheduledAt:
+                emails[emails.length - 1]?.scheduledAt.toISOString() || existing.startAt.toISOString(),
+            };
+          }
+        }
+      }
+      throw err;
     }
+
+    // PART 6: Immediately dispatch outbox records to BullMQ
+    // Even if Redis is momentarily unavailable, outbox rows exist with status='pending' and will be drained by reconciler
+    const outboxIds = outboxRecordsToCreate.map((o) => o.id);
+    OutboxService.dispatchOutboxMessages(outboxIds).catch((err) => {
+      logger.warn(`Async outbox dispatch error: ${err.message}. Reconciler will recover.`);
+    });
 
     const firstScheduledAt = emailRecordsToCreate[0].scheduledAt.toISOString();
     const lastScheduledAt = emailRecordsToCreate[emailRecordsToCreate.length - 1].scheduledAt.toISOString();
@@ -328,18 +375,22 @@ export class EmailService {
         lastError: e.lastError,
         createdAt: e.createdAt.toISOString(),
         updatedAt: e.updatedAt.toISOString(),
-        sender: e.sender ? {
-          ...e.sender,
-          createdAt: e.sender.createdAt.toISOString(),
-          updatedAt: e.sender.updatedAt.toISOString(),
-        } : undefined,
-        campaign: e.campaign ? {
-          ...e.campaign,
-          status: e.campaign.status as any,
-          startAt: e.campaign.startAt.toISOString(),
-          createdAt: e.campaign.createdAt.toISOString(),
-          updatedAt: e.campaign.updatedAt.toISOString(),
-        } : undefined,
+        sender: e.sender
+          ? {
+              ...e.sender,
+              createdAt: e.sender.createdAt.toISOString(),
+              updatedAt: e.sender.updatedAt.toISOString(),
+            }
+          : undefined,
+        campaign: e.campaign
+          ? {
+              ...e.campaign,
+              status: e.campaign.status as any,
+              startAt: e.campaign.startAt.toISOString(),
+              createdAt: e.campaign.createdAt.toISOString(),
+              updatedAt: e.campaign.updatedAt.toISOString(),
+            }
+          : undefined,
       })),
       total,
       page,

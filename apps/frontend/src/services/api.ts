@@ -26,6 +26,11 @@ export function getApiBaseUrl(): string {
   return '/api';
 }
 
+export function isDemoModeActive(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean(localStorage.getItem('inboxpilot_demo_session'));
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -39,7 +44,7 @@ export class ApiError extends Error {
 }
 
 // -----------------------------------------------------------------------------
-// Interactive Local Storage Demo Store (used when backend is not connected)
+// Interactive Local Storage Demo Store (ISOLATED from live backend data)
 // -----------------------------------------------------------------------------
 const INITIAL_DEMO_SCHEDULED: EmailDto[] = [
   {
@@ -244,7 +249,7 @@ function saveDemoScheduled(items: EmailDto[]) {
 }
 
 // -----------------------------------------------------------------------------
-// Real Fetch Request with automatic Demo Fallback
+// Real Fetch Request with Accurate Error Propagation
 // -----------------------------------------------------------------------------
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const baseUrl = getApiBaseUrl();
@@ -255,129 +260,147 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Content-Type', 'application/json');
   }
 
+  let res: Response;
   try {
-    const res = await fetch(url, {
+    res = await fetch(url, {
       ...options,
       headers,
       credentials: 'include',
     });
+  } catch (netErr: any) {
+    throw new ApiError(
+      `Cannot connect to backend API at ${baseUrl}. Ensure backend is running.`,
+      'NETWORK_ERROR',
+      0
+    );
+  }
 
-    const contentType = res.headers.get('content-type') || '';
-    if (res.ok && contentType.includes('application/json')) {
-      const data = await res.json();
-      if (data.success !== false) {
-        return (data.data !== undefined ? data.data : data) as T;
-      }
-    }
-  } catch {}
+  const contentType = res.headers.get('content-type') || '';
+  let responseData: any = null;
+  if (contentType.includes('application/json')) {
+    try {
+      responseData = await res.json();
+    } catch {}
+  }
 
-  // If real backend call failed, throw ApiError so callers or fallback can handle
-  throw new ApiError('Backend unavailable', 'BACKEND_UNAVAILABLE');
+  if (!res.ok) {
+    const errorMsg =
+      responseData?.error?.message ||
+      responseData?.message ||
+      `HTTP Error ${res.status}: ${res.statusText}`;
+    const errorCode = responseData?.error?.code || 'API_ERROR';
+    throw new ApiError(errorMsg, errorCode, res.status, responseData?.error?.details);
+  }
+
+  if (responseData && responseData.success === false) {
+    const errorMsg = responseData?.error?.message || 'Operation failed';
+    const errorCode = responseData?.error?.code || 'OPERATION_FAILED';
+    throw new ApiError(errorMsg, errorCode, res.status, responseData?.error?.details);
+  }
+
+  return (responseData?.data !== undefined ? responseData.data : responseData) as T;
+}
+
+// Helper to handle demo mode schedule
+function handleDemoSchedule(payload: ScheduleEmailInput): ScheduleEmailResponseData {
+  const current = getDemoScheduled();
+  const startAt = new Date(payload.startAt);
+  const delayMs = payload.delayBetweenEmailsMs || 2000;
+  const newEmails: EmailDto[] = [];
+
+  payload.recipients.forEach((r, idx) => {
+    const email = typeof r === 'string' ? r : (r as any).email;
+    const schedTime = new Date(startAt.getTime() + idx * delayMs).toISOString();
+    newEmails.push({
+      id: `demo-sched-${Date.now()}-${idx}`,
+      userId: 'demo-user-evaluator',
+      campaignId: `camp-demo-${Date.now()}`,
+      senderId: 'demo-sender-1',
+      recipientEmail: email,
+      subject: payload.subject,
+      body: payload.body,
+      scheduledAt: schedTime,
+      sentAt: null,
+      status: 'scheduled',
+      idempotencyKey: `demo-${Date.now()}:${email}`,
+      bullmqJobId: `email:demo-${Date.now()}-${idx}`,
+      attempts: 0,
+      lastError: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sender: {
+        id: 'demo-sender-1',
+        userId: 'demo-user-evaluator',
+        name: 'Growth Outreach',
+        email: 'growth@reachinbox.ai',
+        isDefault: true,
+        hourlyLimit: 200,
+        minimumSendIntervalMs: 2000,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  });
+
+  const updated = [...newEmails, ...current];
+  saveDemoScheduled(updated);
+
+  return {
+    campaign: {
+      id: `camp-demo-${Date.now()}`,
+      userId: 'demo-user-evaluator',
+      senderId: 'demo-sender-1',
+      name: payload.name || 'Untitled Campaign',
+      subject: payload.subject,
+      body: payload.body,
+      startAt: payload.startAt,
+      delayBetweenEmailsMs: delayMs,
+      hourlyLimit: payload.hourlyLimit || 200,
+      status: 'active',
+      totalEmails: payload.recipients.length,
+      sentCount: 0,
+      failedCount: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    totalAccepted: payload.recipients.length,
+    totalRejected: 0,
+    rejectedReasons: [],
+    firstScheduledAt: newEmails[0].scheduledAt,
+    lastScheduledAt: newEmails[newEmails.length - 1].scheduledAt,
+  };
 }
 
 export const api = {
   auth: {
     getMe: async (): Promise<UserDto & { senders: SenderDto[] }> => {
-      try {
-        return await request<UserDto & { senders: SenderDto[] }>('/auth/me');
-      } catch {
-        // Check demo session
+      if (isDemoModeActive()) {
         const demo = localStorage.getItem('inboxpilot_demo_session');
         if (demo) return JSON.parse(demo);
         throw new ApiError('Not logged in', 'UNAUTHORIZED', 401);
       }
+      return await request<UserDto & { senders: SenderDto[] }>('/auth/me');
     },
     logout: async () => {
-      try {
-        return await request<{ message: string }>('/auth/logout', { method: 'POST' });
-      } catch {
-        return { message: 'Logged out from demo' };
+      if (isDemoModeActive()) {
+        localStorage.removeItem('inboxpilot_demo_session');
+        return { message: 'Logged out from preview demo' };
       }
+      return await request<{ message: string }>('/auth/logout', { method: 'POST' });
     },
   },
   emails: {
     schedule: async (payload: ScheduleEmailInput): Promise<ScheduleEmailResponseData> => {
-      try {
-        return await request<ScheduleEmailResponseData>('/emails/schedule', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        // Demo Mode Fallback: add emails to demo store
-        const current = getDemoScheduled();
-        const startAt = new Date(payload.startAt);
-        const delayMs = payload.delayBetweenEmailsMs || 2000;
-        const newEmails: EmailDto[] = [];
-
-        payload.recipients.forEach((r, idx) => {
-          const email = typeof r === 'string' ? r : (r as any).email;
-          const schedTime = new Date(startAt.getTime() + idx * delayMs).toISOString();
-          newEmails.push({
-            id: `demo-sched-${Date.now()}-${idx}`,
-            userId: 'demo-user-evaluator',
-            campaignId: `camp-demo-${Date.now()}`,
-            senderId: 'demo-sender-1',
-            recipientEmail: email,
-            subject: payload.subject,
-            body: payload.body,
-            scheduledAt: schedTime,
-            sentAt: null,
-            status: 'scheduled',
-            idempotencyKey: `demo-${Date.now()}:${email}`,
-            bullmqJobId: `email:demo-${Date.now()}-${idx}`,
-            attempts: 0,
-            lastError: null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            sender: {
-              id: 'demo-sender-1',
-              userId: 'demo-user-evaluator',
-              name: 'Growth Outreach',
-              email: 'growth@reachinbox.ai',
-              isDefault: true,
-              hourlyLimit: 200,
-              minimumSendIntervalMs: 2000,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            },
-          });
-        });
-
-        const updated = [...newEmails, ...current];
-        saveDemoScheduled(updated);
-
-        return {
-          campaign: {
-            id: `camp-demo-${Date.now()}`,
-            userId: 'demo-user-evaluator',
-            senderId: 'demo-sender-1',
-            name: payload.name || 'Untitled Campaign',
-            subject: payload.subject,
-            body: payload.body,
-            startAt: payload.startAt,
-            delayBetweenEmailsMs: delayMs,
-            hourlyLimit: payload.hourlyLimit || 200,
-            status: 'active',
-            totalEmails: payload.recipients.length,
-            sentCount: 0,
-            failedCount: 0,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-          totalAccepted: payload.recipients.length,
-          totalRejected: 0,
-          rejectedReasons: [],
-          firstScheduledAt: newEmails[0].scheduledAt,
-          lastScheduledAt: newEmails[newEmails.length - 1].scheduledAt,
-        };
+      if (isDemoModeActive()) {
+        return handleDemoSchedule(payload);
       }
+      return await request<ScheduleEmailResponseData>('/emails/schedule', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
     },
     getScheduled: async (page = 1, limit = 10, search?: string): Promise<PaginatedResponse<EmailDto>> => {
-      try {
-        const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-        if (search) params.append('search', search);
-        return await request<PaginatedResponse<EmailDto>>(`/emails/scheduled?${params.toString()}`);
-      } catch {
+      if (isDemoModeActive()) {
         let items = getDemoScheduled();
         if (search) {
           items = items.filter(
@@ -396,13 +419,12 @@ export const api = {
           totalPages: Math.ceil(total / limit) || 1,
         };
       }
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (search) params.append('search', search);
+      return await request<PaginatedResponse<EmailDto>>(`/emails/scheduled?${params.toString()}`);
     },
     getSent: async (page = 1, limit = 10, search?: string): Promise<PaginatedResponse<EmailDto>> => {
-      try {
-        const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-        if (search) params.append('search', search);
-        return await request<PaginatedResponse<EmailDto>>(`/emails/sent?${params.toString()}`);
-      } catch {
+      if (isDemoModeActive()) {
         let items = INITIAL_DEMO_SENT;
         if (search) {
           items = items.filter(
@@ -421,21 +443,21 @@ export const api = {
           totalPages: Math.ceil(total / limit) || 1,
         };
       }
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (search) params.append('search', search);
+      return await request<PaginatedResponse<EmailDto>>(`/emails/sent?${params.toString()}`);
     },
     getById: async (id: string): Promise<EmailDto> => {
-      try {
-        return await request<EmailDto>(`/emails/${id}`);
-      } catch {
+      if (isDemoModeActive()) {
         const all = [...getDemoScheduled(), ...INITIAL_DEMO_SENT];
         const found = all.find((e) => e.id === id);
         if (found) return found;
-        throw new ApiError('Email not found', 'NOT_FOUND', 404);
+        throw new ApiError('Email not found in preview demo store', 'NOT_FOUND', 404);
       }
+      return await request<EmailDto>(`/emails/${id}`);
     },
     cancel: async (id: string): Promise<EmailDto> => {
-      try {
-        return await request<EmailDto>(`/emails/${id}/cancel`, { method: 'POST' });
-      } catch {
+      if (isDemoModeActive()) {
         const current = getDemoScheduled();
         const found = current.find((e) => e.id === id);
         const filtered = current.filter((e) => e.id !== id);
@@ -443,15 +465,14 @@ export const api = {
         if (found) {
           return { ...found, status: 'cancelled' };
         }
-        throw new ApiError('Email not found', 'NOT_FOUND', 404);
+        throw new ApiError('Email not found in preview demo store', 'NOT_FOUND', 404);
       }
+      return await request<EmailDto>(`/emails/${id}/cancel`, { method: 'POST' });
     },
   },
   senders: {
     list: async (): Promise<SenderDto[]> => {
-      try {
-        return await request<SenderDto[]>('/senders');
-      } catch {
+      if (isDemoModeActive()) {
         return [
           {
             id: 'demo-sender-1',
@@ -477,14 +498,10 @@ export const api = {
           },
         ];
       }
+      return await request<SenderDto[]>('/senders');
     },
     create: async (payload: Partial<SenderDto>): Promise<SenderDto> => {
-      try {
-        return await request<SenderDto>('/senders', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-      } catch {
+      if (isDemoModeActive()) {
         return {
           id: `sender-${Date.now()}`,
           userId: 'demo-user-evaluator',
@@ -497,20 +514,21 @@ export const api = {
           updatedAt: new Date().toISOString(),
         };
       }
+      return await request<SenderDto>('/senders', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
     },
   },
   campaigns: {
     list: async (): Promise<CampaignDto[]> => {
-      try {
-        return await request<CampaignDto[]>('/campaigns');
-      } catch {
+      if (isDemoModeActive()) {
         return [];
       }
+      return await request<CampaignDto[]>('/campaigns');
     },
     getStats: async (): Promise<DashboardStatsDto> => {
-      try {
-        return await request<DashboardStatsDto>('/campaigns/stats/overview');
-      } catch {
+      if (isDemoModeActive()) {
         const sched = getDemoScheduled();
         return {
           totalScheduled: sched.filter((e) => e.status === 'scheduled' || e.status === 'processing').length,
@@ -520,6 +538,7 @@ export const api = {
           activeSenders: 2,
         };
       }
+      return await request<DashboardStatsDto>('/campaigns/stats/overview');
     },
   },
   health: {

@@ -35,6 +35,7 @@ export interface CampaignDto {
   delayBetweenEmailsMs: number;
   hourlyLimit: number;
   status: CampaignStatus;
+  idempotencyKey?: string | null;
   totalEmails: number;
   sentCount: number;
   failedCount: number;

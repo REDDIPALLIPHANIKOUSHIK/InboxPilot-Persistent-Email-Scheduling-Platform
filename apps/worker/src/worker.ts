@@ -46,7 +46,7 @@ export function createEmailWorker(): Worker {
         return { skipped: true, reason: 'EMAIL_NOT_FOUND' };
       }
 
-      // Hard idempotency constraint: never resend an email already sent
+      // Hard idempotency constraints: never resend terminal emails
       if (email.status === 'sent') {
         logger.info(`Idempotency guard: Email ${emailId} already marked as sent. Skipping.`);
         return { skipped: true, reason: 'ALREADY_SENT' };
@@ -62,29 +62,28 @@ export function createEmailWorker(): Worker {
         return { skipped: true, reason: 'MAX_ATTEMPTS_REACHED' };
       }
 
-      const hourlyLimit = email.sender?.hourlyLimit || job.data.hourlyLimit || env.MAX_EMAILS_PER_HOUR_PER_SENDER;
-      const minSendIntervalMs = email.sender?.minimumSendIntervalMs ?? job.data.minimumSendIntervalMs ?? env.MIN_SEND_INTERVAL_MS;
+      const hourlyLimit =
+        email.sender?.hourlyLimit || job.data.hourlyLimit || env.MAX_EMAILS_PER_HOUR_PER_SENDER;
+      const minSendIntervalMs =
+        email.sender?.minimumSendIntervalMs ?? job.data.minimumSendIntervalMs ?? env.MIN_SEND_INTERVAL_MS;
 
-      // 2. Enforce Minimum Send Interval across distributed workers
+      // 2. Enforce Minimum Send Interval across distributed workers (PART 4)
+      // Check spacing BEFORE rate limit so quota is not consumed if spacing is delayed
       if (minSendIntervalMs > 0) {
         const spacing = await limiter.checkSendSpacing(email.senderId, minSendIntervalMs);
         if (!spacing.allowed && spacing.waitMs > 0) {
-          if (spacing.waitMs <= 2000) {
-            // Short delay: sleep inline
-            logger.debug(`Applying short inline delay of ${spacing.waitMs}ms for sender ${email.senderId}`);
-            await new Promise((resolve) => setTimeout(resolve, spacing.waitMs));
-          } else {
-            // Longer delay: reschedule job in BullMQ
-            logger.info(`Spacing delay: Re-delaying job ${job.id} by ${spacing.waitMs}ms to respect interval`);
-            if (token) {
-              await job.moveToDelayed(Date.now() + spacing.waitMs, token);
-              throw new DelayedError();
-            }
+          logger.info(
+            `[SPACING] Sender ${email.senderId} must wait ${spacing.waitMs}ms to respect interval. Rescheduling job ${job.id}`
+          );
+          if (token) {
+            await job.moveToDelayed(Date.now() + spacing.waitMs, token);
+            throw new DelayedError();
           }
+          return { rescheduled: true, reason: 'SPACING_DELAY', waitMs: spacing.waitMs };
         }
       }
 
-      // 3. Enforce Distributed Hourly Rate Limit
+      // 3. Enforce Distributed Hourly Rate Limit (PART 3)
       const rateLimit = await limiter.acquireHourlySlot(email.senderId, hourlyLimit, email.id);
       if (!rateLimit.allowed) {
         const newScheduledAt = new Date(Date.now() + rateLimit.retryAfterMs);
@@ -106,15 +105,26 @@ export function createEmailWorker(): Worker {
         return { rescheduled: true, retryAfterMs: rateLimit.retryAfterMs };
       }
 
-      // 4. Mark status as 'processing' and record delivery attempt
+      // 4. Safe conditional state transition to 'processing' (PART 7)
       const attemptNumber = email.attempts + 1;
-      await prisma.email.update({
-        where: { id: email.id },
+      const leaseResult = await prisma.email.updateMany({
+        where: {
+          id: email.id,
+          status: { in: ['scheduled', 'processing'] },
+        },
         data: {
           status: 'processing',
-          attempts: attemptNumber,
+          attempts: { increment: 1 },
         },
       });
+
+      if (leaseResult.count === 0) {
+        logger.warn(
+          `Email ${email.id} state transition failed (already sent, cancelled, or in conflict). Aborting job.`
+        );
+        await limiter.releaseHourlySlot(email.senderId, email.id);
+        return { skipped: true, reason: 'STATE_CONFLICT' };
+      }
 
       const attemptId = crypto.randomUUID();
       await prisma.deliveryAttempt.create({
@@ -137,32 +147,34 @@ export function createEmailWorker(): Worker {
           body: email.body,
         });
 
-        // 6. Record Success
+        // 6. Record Success with atomic conditional update
         const now = new Date();
-        await prisma.$transaction([
-          prisma.deliveryAttempt.update({
-            where: { id: attemptId },
-            data: {
-              completedAt: now,
-              status: 'success',
-              providerMessageId: result.messageId,
-            },
-          }),
-          prisma.email.update({
-            where: { id: email.id },
-            data: {
-              status: 'sent',
-              sentAt: now,
-              lastError: null,
-            },
-          }),
-          prisma.campaign.update({
+        const updateSentResult = await prisma.email.updateMany({
+          where: { id: email.id, status: 'processing' },
+          data: {
+            status: 'sent',
+            sentAt: now,
+            lastError: null,
+          },
+        });
+
+        await prisma.deliveryAttempt.update({
+          where: { id: attemptId },
+          data: {
+            completedAt: now,
+            status: 'success',
+            providerMessageId: result.messageId,
+          },
+        });
+
+        if (updateSentResult.count > 0) {
+          await prisma.campaign.update({
             where: { id: email.campaignId },
             data: {
               sentCount: { increment: 1 },
             },
-          }),
-        ]);
+          });
+        }
 
         logger.info(`✅ Email [${email.id}] successfully sent to <${email.recipientEmail}>!`);
         if (result.previewUrl) {
@@ -180,7 +192,9 @@ export function createEmailWorker(): Worker {
             where: { id: email.campaignId },
             data: { status: 'completed' },
           });
-          logger.info(`🎉 Campaign ${email.campaignId} completed (${campaign.sentCount} sent, ${campaign.failedCount} failed)`);
+          logger.info(
+            `🎉 Campaign ${email.campaignId} completed (${campaign.sentCount} sent, ${campaign.failedCount} failed)`
+          );
         }
 
         return {
@@ -196,7 +210,8 @@ export function createEmailWorker(): Worker {
         await limiter.releaseHourlySlot(email.senderId, email.id);
 
         const isPermanentError =
-          err.responseCode && err.responseCode >= 500 && err.responseCode < 600;
+          (err.responseCode && err.responseCode >= 500 && err.responseCode < 600) ||
+          attemptNumber >= 3;
 
         await prisma.deliveryAttempt.update({
           where: { id: attemptId },
@@ -207,34 +222,35 @@ export function createEmailWorker(): Worker {
           },
         });
 
-        if (isPermanentError || attemptNumber >= 3) {
+        if (isPermanentError) {
           // Terminal failure
-          await prisma.$transaction([
-            prisma.email.update({
-              where: { id: email.id },
-              data: {
-                status: 'failed',
-                lastError: err.message,
-              },
-            }),
-            prisma.campaign.update({
+          const updateFailResult = await prisma.email.updateMany({
+            where: { id: email.id, status: 'processing' },
+            data: {
+              status: 'failed',
+              lastError: err.message,
+            },
+          });
+
+          if (updateFailResult.count > 0) {
+            await prisma.campaign.update({
               where: { id: email.campaignId },
               data: {
                 failedCount: { increment: 1 },
               },
-            }),
-          ]);
+            });
+          }
           logger.warn(`Email ${email.id} permanently failed after ${attemptNumber} attempts.`);
         } else {
-          // Retryable error: revert status to scheduled so BullMQ backoff works
-          await prisma.email.update({
-            where: { id: email.id },
+          // Retryable error: revert status to scheduled so BullMQ backoff works safely
+          await prisma.email.updateMany({
+            where: { id: email.id, status: 'processing' },
             data: {
               status: 'scheduled',
               lastError: err.message,
             },
           });
-          throw err; // Trigger BullMQ retry
+          throw err; // Trigger BullMQ retry with exponential backoff
         }
 
         return { success: false, error: err.message };

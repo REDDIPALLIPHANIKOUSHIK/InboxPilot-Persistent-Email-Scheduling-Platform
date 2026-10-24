@@ -4,15 +4,28 @@ import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
 import { emailQueue } from './lib/queue.js';
+import { OutboxService } from './services/outbox.service.js';
 
 const server = app.listen(env.PORT, () => {
   logger.info(`🚀 InboxPilot Backend API listening on port ${env.PORT} in [${env.NODE_ENV}] mode`);
   logger.info(`📡 Health endpoints available at http://localhost:${env.PORT}/api/health`);
 });
 
+// Periodic Transactional Outbox Reconciler (every 5 seconds)
+// Guarantees that any pending messages survive restarts, crashes, and Redis downtime
+const outboxInterval = setInterval(() => {
+  OutboxService.reconcileOutbox().catch((err) => {
+    logger.warn(`Outbox reconciler error: ${err.message}`);
+  });
+}, 5000);
+
+// Run initial outbox reconcile on boot
+OutboxService.reconcileOutbox().catch(() => {});
+
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
   logger.info(`Received ${signal}. Starting graceful shutdown...`);
+  clearInterval(outboxInterval);
 
   server.close(async () => {
     logger.info('HTTP server closed.');
